@@ -1,3 +1,3 @@
-from .client import Client, ReflectionClient
+from .client import Client, ReflectionClient, get_by_endpoint
 
-__version__ = "0.0.1"
+__version__ = "0.0.2"

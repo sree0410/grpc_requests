@@ -1,6 +1,6 @@
 import logging
 from functools import partial
-from typing import NamedTuple, Any, Dict
+from typing import NamedTuple, Any, Dict, Set
 
 import grpc
 from google.protobuf import symbol_database as _symbol_database, descriptor_pool as _descriptor_pool, descriptor_pb2
@@ -33,6 +33,7 @@ _clients = {}
 
 class BaseClient:
     def __init__(self, endpoint, symbol_db=None, descriptor_pool=None):
+        self.endpoint = endpoint
         self._symbol_db = symbol_db or _symbol_database.Default()
         self._desc_pool = descriptor_pool or _descriptor_pool.Default()
         self._channel = grpc.insecure_channel(endpoint)
@@ -58,6 +59,7 @@ class ReflectionClient(BaseClient):
     def __init__(self, endpoint, symbol_db=None, descriptor_pool=None, lazy=False):
         super().__init__(endpoint, symbol_db, descriptor_pool)
         self._service_names: list = None
+        self._support_methods: Dict[str, Set[str]] = {}
         self.reflection_stub = reflection_pb2_grpc.ServerReflectionStub(self.channel)
         self.registered_file_names = set()
         self.has_server_registered = False
@@ -85,7 +87,9 @@ class ReflectionClient(BaseClient):
     def _get_service_names(self):
         request = reflection_pb2.ServerReflectionRequest(list_services="")
         resp = self._reflection_single_request(request)
-        return tuple([s.name for s in resp.list_services_response.service])
+        services = tuple([s.name for s in resp.list_services_response.service])
+        self._support_methods = {s: set() for s in services}
+        return services
 
     def _get_file_descriptor_by_name(self, name):
         request = reflection_pb2.ServerReflectionRequest(file_by_filename=name)
@@ -114,13 +118,25 @@ class ReflectionClient(BaseClient):
         self._desc_pool.Add(file_descriptor)
         logging.debug(f"end {file_descriptor.name} register")
 
+    def check_method_available(self, service, method):
+        if not self.has_server_registered:
+            self.register_services_proto()
+
+        if service not in self._support_methods:
+            raise ValueError(
+                f"{self.endpoint} server doesn't support {service}. Available services {self.service_names}")
+
+        if method not in self._support_methods[service]:
+            raise ValueError(
+                f"{service} doesn't support {method} method. Available methods {self._support_methods[service]}")
+        return True
+
     def register_services_proto(self):
         for service in self.service_names:
             logging.debug(f"start {service} register")
             file_descriptor = self._get_file_descriptor_by_symbol(service)
-            # module_name = f"{'.'.join(file_descriptor.name.replace('/', '.').split('.')[:-1])}_pb2"
-
             self._register_file_descriptor(file_descriptor)
+            self._support_methods[service] = set(self.get_service_descriptor(service).methods_by_name.keys())
             logging.debug(f"end {service} register")
         self.has_server_registered = True
 
@@ -130,32 +146,90 @@ class ReflectionClient(BaseClient):
             self._service_names = self._get_service_names()
         return self._service_names
 
-    def _make_method_name(self, service, method):
+    def _make_method_full_name(self, service, method):
         return f"/{service}/{method}"
 
-    def register_unary_unary_handler(self, service: str, method: str):
-        method_name = self._make_method_name(service, method)
-        self._unary_unary_handler[method_name] = self.channel.unary_unary(
-            **self.make_handler_argument(service, method)
-        )
+    def _register_handler(self, method_type: str, service: str, method: str):
+        method_full_name = self._make_method_full_name(service, method)
+        handler_map = getattr(self, f"_{method_type}_handler")
+        method_register_func = getattr(self.channel, method_type)
+        handler_map[method_full_name] = method_register_func(**self.make_handler_argument(service, method))
+
+    def _parse_input(self, data, input_type):
+        _data = data or {}
+        if isinstance(_data, dict):
+            input = ParseDict(_data, input_type())
+        else:
+            input = _data
+        return input
+
+    def _parse_stream_input(self, datas, input_type):
+        for data in datas:
+            _data = data or {}
+            yield self._parse_input(_data, input_type)
+
+    def _parse_output(self, result):
+        return MessageToDict(result)
+
+    def _parse_stream_output(self, results):
+        for result in results:
+            yield self._parse_output(result)
 
     def unary_unary(self, service, method, data=None, raw_output=False):
-        name = self._make_method_name(service, method)
-        if name not in self._unary_unary_handler:
-            self.register_unary_unary_handler(service, method)
-
-        _data = data or {}
+        self.check_method_available(service, method)
+        name = self._make_method_full_name(service, method)
         dtype = self.get_method_data_type(service, method)
 
-        if isinstance(_data, dict):
-            request = ParseDict(_data, dtype.input_type())
-        else:
-            request = _data
-        result = self._unary_unary_handler[name](request)
+        if name not in self._unary_unary_handler:
+            self._register_handler('unary_unary', service, method)
+
+        result = self._unary_unary_handler[name](self._parse_input(data, dtype.input_type))
         if raw_output:
             return result
         else:
-            return MessageToDict(result)
+            return self._parse_output(result)
+
+    def unary_stream(self, service, method, data=None, raw_output=False):
+        self.check_method_available(service, method)
+        name = self._make_method_full_name(service, method)
+        dtype = self.get_method_data_type(service, method)
+
+        if name not in self._unary_stream_handler:
+            self._register_handler('unary_stream', service, method)
+
+        results = self._unary_stream_handler[name](self._parse_input(data, dtype))
+        if raw_output:
+            return results
+        else:
+            return self._parse_stream_output(results)
+
+    def stream_unary(self, service, method, datas, raw_output=False):
+        self.check_method_available(service, method)
+        name = self._make_method_full_name(service, method)
+        dtype = self.get_method_data_type(service, method)
+
+        if name not in self._stream_unary_handler:
+            self._register_handler('stream_unary', service, method)
+
+        result = self._stream_unary_handler[name](self._parse_stream_input(datas, dtype.input_type))
+        if raw_output:
+            return result
+        else:
+            return self._parse_output(result)
+
+    def stream_stream(self, service, method, datas, raw_output=False):
+        self.check_method_available(service, method)
+        name = self._make_method_full_name(service, method)
+        dtype = self.get_method_data_type(service, method)
+
+        if name not in self._stream_stream_handler:
+            self._register_handler('stream_stream', service, method)
+
+        results = self._stream_stream_handler[name](self._parse_stream_input(datas, dtype))
+        if raw_output:
+            return results
+        else:
+            return self._parse_stream_output(results)
 
     def get_service_descriptor(self, service):
         return self._desc_pool.FindServiceByName(service)
@@ -165,7 +239,7 @@ class ReflectionClient(BaseClient):
         return svc_desc.FindMethodByName(method)
 
     def get_method_data_type(self, service: str, method: str) -> MethodDataType:
-        method_name = self._make_method_name(service, method)
+        method_name = self._make_method_full_name(service, method)
         if method_name not in self.methods_data_type:
             method_desc = self.get_method_descriptor(service, method)
             method_dtype = MethodDataType(
@@ -178,7 +252,7 @@ class ReflectionClient(BaseClient):
     def make_handler_argument(self, service: str, method: str):
         data_type = self.get_method_data_type(service, method)
         return {
-            'method': self._make_method_name(service, method),
+            'method': self._make_method_full_name(service, method),
             'request_serializer': data_type.input_type.SerializeToString,
             'response_deserializer': data_type.output_type.FromString,
         }

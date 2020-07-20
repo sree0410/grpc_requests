@@ -1,7 +1,7 @@
 # grpc_requests
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/grpc_requests?style=flat-square)](https://pypi.org/project/grpc_requests)
-[![PyPI](https://img.shields.io/pypi/v/grpc_requests?style=flat-square)](https://pypi.org/project/grpc_requests)
-[![PyPI download month](https://img.shields.io/pypi/dm/grpc_requests?style=flat-square)](https://pypi.org/project/grpc_requests)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/grpc-requests?style=flat-square)](https://pypi.org/project/grpc-requests)
+[![PyPI](https://img.shields.io/pypi/v/grpc-requests?style=flat-square)](https://pypi.org/project/grpc-requests)
+[![PyPI download month](https://img.shields.io/pypi/dm/grpc-requests?style=flat-square)](https://pypi.org/project/grpc-requests)
 [![codecov](https://codecov.io/gh/spaceone-dev/grpc_requests/branch/master/graph/badge.svg)](https://codecov.io/gh/spaceone-dev/grpc_requests)
 ![Views](https://views.whatilearened.today/views/github/spaceone-dev/grpc_requests.svg)
 

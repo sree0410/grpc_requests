@@ -139,7 +139,7 @@ class ReflectionClient(BaseClient):
             **self.make_handler_argument(service, method)
         )
 
-    def unary_unary(self, service, method, data=None, raw_result=False):
+    def unary_unary(self, service, method, data=None, raw_output=False):
         name = self._make_method_name(service, method)
         if name not in self._unary_unary_handler:
             self.register_unary_unary_handler(service, method)
@@ -152,7 +152,7 @@ class ReflectionClient(BaseClient):
         else:
             request = _data
         result = self._unary_unary_handler[name](request)
-        if raw_result:
+        if raw_output:
             return result
         else:
             return MessageToDict(result)
@@ -206,41 +206,3 @@ class ServiceClient:
 
 
 Client = ReflectionClient
-
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.DEBUG)
-    port = '50051'
-    host = "identity.dev.spaceone.dev"
-    endpoint = f"{host}:{port}"
-
-    client = Client.get_by_endpoint(endpoint)
-
-    service = "grpc.health.v1.Health"
-    method = 'Check'
-    print(client.service_names)
-
-    result = client.unary_unary(service, method, {"service": ''})
-    print(result)
-
-    service = "spaceone.api.identity.v1.Domain"
-    method = 'list'
-    result = client.unary_unary(service, method, {})
-    print(result)
-
-    data = {
-        "query": {
-            "filter": [
-                {
-                    "key": "name",
-                    "value": "megazone",
-                    "operator": "eq"
-                }
-            ]
-        }
-    }
-    result = client.unary_unary(service, method, data)
-    print(result)
-
-    service_client = client.service(service)
-    result = service_client.list(data)
-    print('service client',result)

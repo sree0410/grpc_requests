@@ -28,9 +28,6 @@ def reflection_request(channel, requests):
         print(err)
 
 
-_clients = {}
-
-
 class BaseClient:
     def __init__(self, endpoint, symbol_db=None, descriptor_pool=None):
         self.endpoint = endpoint
@@ -44,9 +41,23 @@ class BaseClient:
 
     @classmethod
     def get_by_endpoint(cls, endpoint, **kwargs):
-        if endpoint not in _clients:
-            _clients[endpoint] = cls(endpoint, **kwargs)
-        return _clients[endpoint]
+        if endpoint not in _cached_clients:
+            _cached_clients[endpoint] = cls(endpoint, **kwargs)
+        return _cached_clients[endpoint]
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            self._channel._close()
+        except Exception:  # pylint: disable=bare-except
+            pass
+        return False
+
+    def __del__(self):
+        if self._channel:
+            try:
+                del self._channel
+            except Exception:  # pylint: disable=bare-except
+                pass
 
 
 class MethodDataType(NamedTuple):
@@ -197,7 +208,7 @@ class ReflectionClient(BaseClient):
         if name not in self._unary_stream_handler:
             self._register_handler('unary_stream', service, method)
 
-        results = self._unary_stream_handler[name](self._parse_input(data, dtype))
+        results = self._unary_stream_handler[name](self._parse_input(data, dtype.input_type))
         if raw_output:
             return results
         else:
@@ -225,7 +236,7 @@ class ReflectionClient(BaseClient):
         if name not in self._stream_stream_handler:
             self._register_handler('stream_stream', service, method)
 
-        results = self._stream_stream_handler[name](self._parse_stream_input(datas, dtype))
+        results = self._stream_stream_handler[name](self._parse_stream_input(datas, dtype.input_type))
         if raw_output:
             return results
         else:
@@ -280,3 +291,20 @@ class ServiceClient:
 
 
 Client = ReflectionClient
+
+_cached_clients: Dict[str, Client] = {}
+
+
+def get_by_endpoint(endpoint, **kwargs) -> Client:
+    if endpoint not in _cached_clients:
+        _cached_clients[endpoint] = Client(endpoint, **kwargs)
+    return _cached_clients[endpoint]
+
+
+def reset_cached_client(endpoint=None):
+    global _cached_clients
+    if endpoint:
+        if endpoint in _cached_clients:
+            del _cached_clients[endpoint]
+    else:
+        _cached_clients = {}

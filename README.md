@@ -3,7 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/grpc_requests?style=flat-square)](https://pypi.org/project/grpc_requests)
 [![PyPI download month](https://img.shields.io/pypi/dm/grpc_requests?style=flat-square)](https://pypi.org/project/grpc_requests)
 [![codecov](https://codecov.io/gh/spaceone-dev/grpc_requests/branch/master/graph/badge.svg)](https://codecov.io/gh/spaceone-dev/grpc_requests)
-![Views](views.whatilearened.today/views/github/spaceone-dev/grpc_requests.svg)
+![Views](https://views.whatilearened.today/views/github/spaceone-dev/grpc_requests.svg)
 
 ##GRPC for Humans 
 

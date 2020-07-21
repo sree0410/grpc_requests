@@ -1,9 +1,12 @@
 import logging
+from enum import Enum
 from functools import partial
-from typing import NamedTuple, Any, Dict, Set
+from typing import NamedTuple, Any, Dict, TypeVar, Tuple, Iterable
 
 import grpc
 from google.protobuf import symbol_database as _symbol_database, descriptor_pool as _descriptor_pool, descriptor_pb2
+from google.protobuf.descriptor import ServiceDescriptor, MethodDescriptor
+from google.protobuf.descriptor_pb2 import ServiceDescriptorProto
 from google.protobuf.json_format import MessageToDict, ParseDict
 from grpc_reflection.v1alpha import reflection_pb2_grpc, reflection_pb2
 
@@ -29,11 +32,12 @@ def reflection_request(channel, requests):
 
 
 class BaseClient:
-    def __init__(self, endpoint, symbol_db=None, descriptor_pool=None):
+    def __init__(self, endpoint, symbol_db=None, descriptor_pool=None, channel_options=None):
         self.endpoint = endpoint
         self._symbol_db = symbol_db or _symbol_database.Default()
         self._desc_pool = descriptor_pool or _descriptor_pool.Default()
-        self._channel = grpc.insecure_channel(endpoint)
+        self.channel_options = channel_options
+        self._channel = grpc.insecure_channel(endpoint, options=self.channel_options)
 
     @property
     def channel(self):
@@ -60,9 +64,68 @@ class BaseClient:
                 pass
 
 
-class MethodDataType(NamedTuple):
+def parse_request_data(reqeust_data, input_type):
+    _data = reqeust_data or {}
+    if isinstance(_data, dict):
+        request = ParseDict(_data, input_type())
+    else:
+        request = _data
+    return request
+
+
+def parse_stream_requests(stream_requests_data: Iterable, input_type):
+    for request_data in stream_requests_data:
+        yield parse_request_data(request_data or {}, input_type)
+
+
+def parse_response(response):
+    return MessageToDict(response)
+
+
+def parse_stream_responses(responses: Iterable):
+    for resp in responses:
+        yield parse_response(resp)
+
+
+class MethodType(Enum):
+    UNARY_UNARY = 'unary_unary'
+    STREAM_UNARY = 'stream_unary'
+    UNARY_STREAM = 'unary_stream'
+    STREAM_STREAM = 'stream_stream'
+
+    @property
+    def is_unary_request(self):
+        return 'unary_' in self.value
+
+    @property
+    def request_parser(self):
+        return parse_request_data if self.is_unary_request else parse_stream_requests
+
+    @property
+    def is_unary_response(self):
+        return '_unary' in self.value
+
+    @property
+    def response_parser(self):
+        return parse_response if self.is_unary_response else parse_stream_responses
+
+
+class MethodMetaData(NamedTuple):
     input_type: Any
     output_type: Any
+    method_type: MethodType
+    handler: Any
+
+
+IS_REQUEST_STREAM = TypeVar("IS_REQUEST_STREAM")
+IS_RESPONSE_STREAM = TypeVar("IS_RESPONSE_STREAM")
+
+MethodTypeMatch: Dict[Tuple[IS_REQUEST_STREAM, IS_RESPONSE_STREAM], MethodType] = {
+    (False, False): MethodType.UNARY_UNARY,
+    (True, False): MethodType.STREAM_UNARY,
+    (False, True): MethodType.UNARY_STREAM,
+    (True, True): MethodType.STREAM_STREAM,
+}
 
 
 class ReflectionClient(BaseClient):
@@ -70,20 +133,20 @@ class ReflectionClient(BaseClient):
     def __init__(self, endpoint, symbol_db=None, descriptor_pool=None, lazy=False):
         super().__init__(endpoint, symbol_db, descriptor_pool)
         self._service_names: list = None
-        self._support_methods: Dict[str, Set[str]] = {}
+        self._lazy = lazy
         self.reflection_stub = reflection_pb2_grpc.ServerReflectionStub(self.channel)
         self.registered_file_names = set()
         self.has_server_registered = False
         self._services_module_name = {}
+        self._service_methods_meta: Dict[str, Dict[str, MethodMetaData]] = {}
 
-        self.methods_data_type: Dict[str, MethodDataType] = {}
         self._unary_unary_handler = {}
         self._unary_stream_handler = {}
         self._stream_unary_handler = {}
         self._stream_stream_handler = {}
 
-        if not lazy:
-            self.register_services_proto()
+        if not self._lazy:
+            self.register_all_service()
 
     def _reflection_request(self, *requests):
         responses = self.reflection_stub.ServerReflectionInfo((r for r in requests))
@@ -99,7 +162,6 @@ class ReflectionClient(BaseClient):
         request = reflection_pb2.ServerReflectionRequest(list_services="")
         resp = self._reflection_single_request(request)
         services = tuple([s.name for s in resp.list_services_response.service])
-        self._support_methods = {s: set() for s in services}
         return services
 
     def _get_file_descriptor_by_name(self, name):
@@ -129,26 +191,60 @@ class ReflectionClient(BaseClient):
         self._desc_pool.Add(file_descriptor)
         logging.debug(f"end {file_descriptor.name} register")
 
-    def check_method_available(self, service, method):
+    def check_method_available(self, service, method, method_type: MethodType = None):
         if not self.has_server_registered:
-            self.register_services_proto()
-
-        if service not in self._support_methods:
+            self.register_all_service()
+        methods_meta = self._service_methods_meta.get(service)
+        if not methods_meta:
             raise ValueError(
                 f"{self.endpoint} server doesn't support {service}. Available services {self.service_names}")
 
-        if method not in self._support_methods[service]:
+        if method not in methods_meta:
             raise ValueError(
-                f"{service} doesn't support {method} method. Available methods {self._support_methods[service]}")
+                f"{service} doesn't support {method} method. Available methods {methods_meta.keys()}")
+        if method_type and method_type != methods_meta[method].method_type:
+            raise ValueError(
+                f"{method} is {methods_meta[method].method_type.value} not {method_type.value}")
         return True
 
-    def register_services_proto(self):
+    def _register_methods(self, service_descriptor: ServiceDescriptor) -> Dict[str, MethodMetaData]:
+        svc_desc_proto = ServiceDescriptorProto()
+        service_descriptor.CopyToProto(svc_desc_proto)
+        service_full_name = service_descriptor.full_name
+        metadata: Dict[str, MethodMetaData] = {}
+        for method_proto in svc_desc_proto.method:
+            method_name = method_proto.name
+            method_desc: MethodDescriptor = service_descriptor.methods_by_name[method_name]
+
+            input_type = self._symbol_db.GetPrototype(method_desc.input_type)
+            output_type = self._symbol_db.GetPrototype(method_desc.output_type)
+            method_type = MethodTypeMatch[(method_proto.client_streaming, method_proto.server_streaming)]
+
+            method_register_func = getattr(self.channel, method_type.value)
+            handler = method_register_func(
+                method=self._make_method_full_name(service_full_name, method_name),
+                request_serializer=input_type.SerializeToString,
+                response_deserializer=output_type.FromString
+            )
+            metadata[method_name] = MethodMetaData(
+                method_type=method_type,
+                input_type=input_type,
+                output_type=output_type,
+                handler=handler
+            )
+        return metadata
+
+    def register_service(self, service_name):
+        logging.debug(f"start {service_name} register")
+        file_descriptor = self._get_file_descriptor_by_symbol(service_name)
+        self._register_file_descriptor(file_descriptor)
+        svc_desc = self._desc_pool.FindServiceByName(service_name)
+        self._service_methods_meta[service_name] = self._register_methods(svc_desc)
+        logging.debug(f"end {service_name} register")
+
+    def register_all_service(self):
         for service in self.service_names:
-            logging.debug(f"start {service} register")
-            file_descriptor = self._get_file_descriptor_by_symbol(service)
-            self._register_file_descriptor(file_descriptor)
-            self._support_methods[service] = set(self.get_service_descriptor(service).methods_by_name.keys())
-            logging.debug(f"end {service} register")
+            self.register_service(service)
         self.has_server_registered = True
 
     @property
@@ -157,90 +253,41 @@ class ReflectionClient(BaseClient):
             self._service_names = self._get_service_names()
         return self._service_names
 
-    def _make_method_full_name(self, service, method):
+    @staticmethod
+    def _make_method_full_name(service, method):
         return f"/{service}/{method}"
 
-    def _register_handler(self, method_type: str, service: str, method: str):
-        method_full_name = self._make_method_full_name(service, method)
-        handler_map = getattr(self, f"_{method_type}_handler")
-        method_register_func = getattr(self.channel, method_type)
-        handler_map[method_full_name] = method_register_func(**self.make_handler_argument(service, method))
+    def _request(self, service, method, request, raw_output=False, **kwargs):
+        # does not check request is available
+        method_meta = self.get_method_meta(service, method)
 
-    def _parse_input(self, data, input_type):
-        _data = data or {}
-        if isinstance(_data, dict):
-            input = ParseDict(_data, input_type())
-        else:
-            input = _data
-        return input
+        _request = method_meta.method_type.request_parser(request, method_meta.input_type)
+        result = method_meta.handler(_request, **kwargs)
 
-    def _parse_stream_input(self, datas, input_type):
-        for data in datas:
-            _data = data or {}
-            yield self._parse_input(_data, input_type)
-
-    def _parse_output(self, result):
-        return MessageToDict(result)
-
-    def _parse_stream_output(self, results):
-        for result in results:
-            yield self._parse_output(result)
-
-    def unary_unary(self, service, method, data=None, raw_output=False):
-        self.check_method_available(service, method)
-        name = self._make_method_full_name(service, method)
-        dtype = self.get_method_data_type(service, method)
-
-        if name not in self._unary_unary_handler:
-            self._register_handler('unary_unary', service, method)
-
-        result = self._unary_unary_handler[name](self._parse_input(data, dtype.input_type))
         if raw_output:
             return result
         else:
-            return self._parse_output(result)
+            return method_meta.method_type.response_parser(result)
 
-    def unary_stream(self, service, method, data=None, raw_output=False):
+    def request(self, service, method, request, raw_output=False, **kwargs):
         self.check_method_available(service, method)
-        name = self._make_method_full_name(service, method)
-        dtype = self.get_method_data_type(service, method)
+        return self._request(service, method, request, raw_output, **kwargs)
 
-        if name not in self._unary_stream_handler:
-            self._register_handler('unary_stream', service, method)
+    def unary_unary(self, service, method, request=None, raw_output=False, **kwargs):
+        self.check_method_available(service, method, MethodType.UNARY_UNARY)
+        return self._request(service, method, request, raw_output, **kwargs)
 
-        results = self._unary_stream_handler[name](self._parse_input(data, dtype.input_type))
-        if raw_output:
-            return results
-        else:
-            return self._parse_stream_output(results)
+    def unary_stream(self, service, method, request=None, raw_output=False, **kwargs):
+        self.check_method_available(service, method, MethodType.UNARY_STREAM)
+        return self._request(service, method, request, raw_output, **kwargs)
 
-    def stream_unary(self, service, method, datas, raw_output=False):
-        self.check_method_available(service, method)
-        name = self._make_method_full_name(service, method)
-        dtype = self.get_method_data_type(service, method)
+    def stream_unary(self, service, method, requests, raw_output=False, **kwargs):
+        self.check_method_available(service, method, MethodType.STREAM_UNARY)
+        return self._request(service, method, requests, raw_output, **kwargs)
 
-        if name not in self._stream_unary_handler:
-            self._register_handler('stream_unary', service, method)
-
-        result = self._stream_unary_handler[name](self._parse_stream_input(datas, dtype.input_type))
-        if raw_output:
-            return result
-        else:
-            return self._parse_output(result)
-
-    def stream_stream(self, service, method, datas, raw_output=False):
-        self.check_method_available(service, method)
-        name = self._make_method_full_name(service, method)
-        dtype = self.get_method_data_type(service, method)
-
-        if name not in self._stream_stream_handler:
-            self._register_handler('stream_stream', service, method)
-
-        results = self._stream_stream_handler[name](self._parse_stream_input(datas, dtype.input_type))
-        if raw_output:
-            return results
-        else:
-            return self._parse_stream_output(results)
+    def stream_stream(self, service, method, requests, raw_output=False, **kwargs):
+        self.check_method_available(service, method, MethodType.STREAM_STREAM)
+        return self._request(service, method, requests, raw_output, **kwargs)
 
     def get_service_descriptor(self, service):
         return self._desc_pool.FindServiceByName(service)
@@ -249,19 +296,12 @@ class ReflectionClient(BaseClient):
         svc_desc = self.get_service_descriptor(service)
         return svc_desc.FindMethodByName(method)
 
-    def get_method_data_type(self, service: str, method: str) -> MethodDataType:
-        method_name = self._make_method_full_name(service, method)
-        if method_name not in self.methods_data_type:
-            method_desc = self.get_method_descriptor(service, method)
-            method_dtype = MethodDataType(
-                self._symbol_db.GetPrototype(method_desc.input_type),
-                self._symbol_db.GetPrototype(method_desc.output_type),
-            )
-            self.methods_data_type[method_name] = method_dtype
-        return self.methods_data_type[method_name]
+    def get_method_meta(self, service: str, method: str) -> MethodMetaData:
+        # add lazy mode & exception
+        return self._service_methods_meta[service][method]
 
     def make_handler_argument(self, service: str, method: str):
-        data_type = self.get_method_data_type(service, method)
+        data_type = self.get_method_meta(service, method)
         return {
             'method': self._make_method_full_name(service, method),
             'request_serializer': data_type.input_type.SerializeToString,

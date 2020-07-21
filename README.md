@@ -26,12 +26,18 @@ pip install grpc_requests
 ```python
 from grpc_requests import Client
 
-port = '50051'
-host = "localhost"
-endpoint = f"{host}:{port}"
-
+endpoint = "localhost:50051"
 client = Client.get_by_endpoint(endpoint)
-print(client.service_names) # ["helloworld.Greeter"]
+assert client.service_names == ["helloworld.Greeter"]
+
+request_data = {"name": 'sinsky'} 
+result = client.request("helloworld.Greeter", "SayHello", request_data)
+print(result) # {"message":"Hellow sinsky"}
+
+```
+
+## static example
+```
 
 service = "helloworld.Greeter"
 unary_unary_method = 'SayHello'
@@ -57,7 +63,7 @@ result = client.stream_stream(service, stream_stream_method,request_datas )
 assert all([dict == type(result) for result in unary_stream_results])
 ```
 
-## using Stub example
+## using Stub way
 ```python
 from grpc_requests import Client
 from helloworld_pb2 import HelloRequest

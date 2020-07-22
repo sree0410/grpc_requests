@@ -102,12 +102,6 @@ assert all([dict == type(result) for result in unary_stream_results])
 ```python
 from grpc_requests import Client
 
-    client = Client.get_by_endpoint("identity.dev.spaceone.dev:50051")
-    print(client.service_names)
-    svc = client.service('grpc.health.v1.Health')
-    print(svc.method_names)
-    print(svc.Check())
-
 client = Client.get_by_endpoint("localhost:50051")
 assert client.service_names == ["helloworld.Greeter",'grpc.health.v1.Health']
 

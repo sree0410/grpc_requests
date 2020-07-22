@@ -1,11 +1,23 @@
-# grpc_requests
+# grpc requests
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/grpc-requests?style=flat-square)](https://pypi.org/project/grpc-requests)
 [![PyPI](https://img.shields.io/pypi/v/grpc-requests?style=flat-square)](https://pypi.org/project/grpc-requests)
 [![PyPI download month](https://img.shields.io/pypi/dm/grpc-requests?style=flat-square)](https://pypi.org/project/grpc-requests)
 [![codecov](https://codecov.io/gh/spaceone-dev/grpc_requests/branch/master/graph/badge.svg)](https://codecov.io/gh/spaceone-dev/grpc_requests)
 ![Views](https://views.whatilearened.today/views/github/spaceone-dev/grpc_requests.svg)
 
-##GRPC for Humans 
+## GRPC for Humans 
+
+```python
+from grpc_requests import Client
+
+client = Client.get_by_endpoint("localhost:50051")
+assert client.service_names == ["helloworld.Greeter"]
+
+request_data = {"name": 'sinsky'} 
+result = client.request("helloworld.Greeter", "SayHello", request_data)
+print(result) # {"message":"Hellow sinsky"}
+
+```
 
 
 ## Feature
@@ -22,48 +34,102 @@
 pip install grpc_requests
 ```
     
+
 ## example
+
+### request unary-unary
 ```python
-from grpc_requests import Client
-
-endpoint = "localhost:50051"
-client = Client.get_by_endpoint(endpoint)
-assert client.service_names == ["helloworld.Greeter"]
-
-request_data = {"name": 'sinsky'} 
-result = client.request("helloworld.Greeter", "SayHello", request_data)
-print(result) # {"message":"Hellow sinsky"}
-
-```
-
-## static example
-```
-
 service = "helloworld.Greeter"
 unary_unary_method = 'SayHello'
 
 request_data = {"name": 'sinsky'} # You Don't Need Stub!
-result = client.unary_unary(service, unary_unary_method, request_data)
+result = client.request(service, unary_unary_method, request_data)
 assert dict == type(result) # result is dict Type!!! not Stub Object!
 assert {"message":"Hellow sinsky"} == result
 
+# or
+
+request_data = {"name": 'sinsky'} # You Don't Need Stub!
+# any one know this method is unary-unary
+result = client.unary_unary(service, unary_unary_method, request_data) 
+assert dict == type(result) # result is dict Type!!! not Stub Object!
+assert {"message":"Hellow sinsky"} == result
+```
+
+### request unary-stream
+```python
 unary_stream_method = 'SayHelloGroup'
-unary_stream_results = client.unary_stream(service, unary_unary_method, request_data)
+unary_stream_results = client.request(service, unary_unary_method, request_data)
 assert all([dict == type(result) for result in unary_stream_results])
 assert [{"message":"Hellow sinsky"}] == list(unary_stream_results)
 
-request_datas = [request_data] # iterator
+# or
 
+unary_stream_results = client.unary_stream(service, unary_unary_method, request_data)
+assert all([dict == type(result) for result in unary_stream_results])
+assert [{"message":"Hellow sinsky"}] == list(unary_stream_results)
+```
+
+### request stream-unary
+```python
+requests_data = [request_data] # iterator
 stream_unary_method = 'HelloEveryone'
-result_stream_unary = client.stream_unary(service, stream_unary_method, request_datas)
+
+result_stream_unary = client.request(service, stream_unary_method, requests_data)
 assert dict == type(result) # result is dict Type!!! not Stub Object!
 
+# or
+
+result_stream_unary = client.stream_unary(service, stream_unary_method, requests_data)
+assert dict == type(result) # result is dict Type!!! not Stub Object!
+```
+
+### request stream-stream
+```python
+requests_data = [request_data] # iterator
 stream_stream_method = 'SayHelloOneByOne'
-result = client.stream_stream(service, stream_stream_method,request_datas )
+
+result = client.request(service, stream_stream_method,requests_data )
+assert all([dict == type(result) for result in unary_stream_results])
+
+# or
+
+result = client.stream_stream(service, stream_stream_method,requests_data )
 assert all([dict == type(result) for result in unary_stream_results])
 ```
 
-## using Stub way
+## using service client
+```python
+from grpc_requests import Client
+
+    client = Client.get_by_endpoint("identity.dev.spaceone.dev:50051")
+    print(client.service_names)
+    svc = client.service('grpc.health.v1.Health')
+    print(svc.method_names)
+    print(svc.Check())
+
+client = Client.get_by_endpoint("localhost:50051")
+assert client.service_names == ["helloworld.Greeter",'grpc.health.v1.Health']
+
+health = client.service('grpc.health.v1.Health')
+assert health.method_names == ('Check', 'Watch')
+
+result = health.Check()
+assert result == {'status': 'SERVING'}
+
+greeter = client.service("helloworld.Greeter")
+
+request_data = {"name": 'sinsky'}
+result = greeter.SayHello(request_data)
+results = greeter.SayHelloGroup(request_data)
+
+requests_data = [{"name": 'sinsky'}]
+result = greeter.HelloEveryone(requests_data)
+results = greeter.SayHelloOneByOne(requests_data)
+
+```
+
+## using Stub
 ```python
 from grpc_requests import Client
 from helloworld_pb2 import HelloRequest
@@ -88,6 +154,9 @@ print(type(result)) # HelloReply stub class
 
 ```
 
+## Road map
+- [ ] support no reflection server
+
 
 ## Relation Project
 - [homi](https://github.com/spaceone-dev/homi) : micro grpc framework like flask. easy to use!
@@ -100,3 +169,7 @@ print(type(result)) # HelloReply stub class
 - 0.0.2
     - support all method type
     - add request test case
+- 0.0.3
+    - Feature
+        - dynamic request method
+        - service client

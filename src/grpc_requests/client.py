@@ -253,6 +253,16 @@ class ReflectionClient(BaseClient):
             self._service_names = self._get_service_names()
         return self._service_names
 
+    def get_methods_meta(self, service_name: str):
+
+        if self._lazy and service_name in self.service_names and service_name not in self._service_methods_meta:
+            self.register_service(service_name)
+
+        try:
+            return self._service_methods_meta[service_name]
+        except KeyError:
+            raise ValueError(f"{service_name} service can't find")
+
     @staticmethod
     def _make_method_full_name(service, method):
         return f"/{service}/{method}"
@@ -269,7 +279,7 @@ class ReflectionClient(BaseClient):
         else:
             return method_meta.method_type.response_parser(result)
 
-    def request(self, service, method, request, raw_output=False, **kwargs):
+    def request(self, service, method, request=None, raw_output=False, **kwargs):
         self.check_method_available(service, method)
         return self._request(service, method, request, raw_output, **kwargs)
 
@@ -318,16 +328,18 @@ class ReflectionClient(BaseClient):
 class ServiceClient:
     def __init__(self, client: ReflectionClient, service_name: str):
         self.client = client
-        self.service_name = service_name
-        self.method_names = tuple(self.client.get_service_descriptor(self.service_name).methods_by_name.keys())
+        self.name = service_name
+        self._methods_meta = self.client.get_methods_meta(self.name)
+        self._method_names = tuple(self._methods_meta.keys())
+        self._register_methods()
 
-        pass
+    def _register_methods(self):
+        for method in self._method_names:
+            setattr(self, method, partial(self.client.request, self.name, method))
 
-    def __getattr__(self, item):
-        if item in self.method_names:
-            return partial(self.client.unary_unary, self.service_name, item)
-        else:
-            raise ValueError(f"{item} doesn't support. Available methods {self.method_names}")
+    @property
+    def method_names(self):
+        return self._method_names
 
 
 Client = ReflectionClient

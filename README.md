@@ -23,17 +23,37 @@ print(result) # {"message":"Hellow sinsky"}
 ## Feature
 - connect server using reflection
 - no need stub class request grpc
-- supprot method
-    - [x] unary-unary
-    - [x] unary-stream
-    - [x] stream-unary
-    - [x] stream-stream
+- support all unary &  stream method
 
 ## install
 ```shell script
 pip install grpc_requests
 ```
-    
+
+## use it like RPC!
+```python
+from grpc_requests import Client
+
+client = Client.get_by_endpoint("localhost:50051")
+assert client.service_names == ["helloworld.Greeter",'grpc.health.v1.Health']
+
+health = client.service('grpc.health.v1.Health')
+assert health.method_names == ('Check', 'Watch')
+
+result = health.Check()
+assert result == {'status': 'SERVING'}
+
+greeter = client.service("helloworld.Greeter")
+
+request_data = {"name": 'sinsky'}
+result = greeter.SayHello(request_data)
+results = greeter.SayHelloGroup(request_data)
+
+requests_data = [{"name": 'sinsky'}]
+result = greeter.HelloEveryone(requests_data)
+results = greeter.SayHelloOneByOne(requests_data)
+
+```    
 
 ## example
 
@@ -98,30 +118,7 @@ result = client.stream_stream(service, stream_stream_method,requests_data )
 assert all([dict == type(result) for result in unary_stream_results])
 ```
 
-## using service client
-```python
-from grpc_requests import Client
 
-client = Client.get_by_endpoint("localhost:50051")
-assert client.service_names == ["helloworld.Greeter",'grpc.health.v1.Health']
-
-health = client.service('grpc.health.v1.Health')
-assert health.method_names == ('Check', 'Watch')
-
-result = health.Check()
-assert result == {'status': 'SERVING'}
-
-greeter = client.service("helloworld.Greeter")
-
-request_data = {"name": 'sinsky'}
-result = greeter.SayHello(request_data)
-results = greeter.SayHelloGroup(request_data)
-
-requests_data = [{"name": 'sinsky'}]
-result = greeter.HelloEveryone(requests_data)
-results = greeter.SayHelloOneByOne(requests_data)
-
-```
 
 ## using Stub
 ```python
@@ -167,3 +164,6 @@ print(type(result)) # HelloReply stub class
     - Feature
         - dynamic request method
         - service client
+- 0.0.5
+    - Change
+        - response filed get orginal proto field(before returend lowerCamelCase)        

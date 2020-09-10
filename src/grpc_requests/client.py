@@ -79,7 +79,7 @@ def parse_stream_requests(stream_requests_data: Iterable, input_type):
 
 
 def parse_response(response):
-    return MessageToDict(response)
+    return MessageToDict(response,preserving_proto_field_name=True)
 
 
 def parse_stream_responses(responses: Iterable):

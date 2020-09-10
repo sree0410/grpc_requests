@@ -1,14 +1,14 @@
 import logging
 from enum import Enum
 from functools import partial
-from typing import NamedTuple, Any, Dict, TypeVar, Tuple, Iterable
+from typing import Any, Dict, Iterable, NamedTuple, Tuple, TypeVar
 
 import grpc
-from google.protobuf import symbol_database as _symbol_database, descriptor_pool as _descriptor_pool, descriptor_pb2
-from google.protobuf.descriptor import ServiceDescriptor, MethodDescriptor
+from google.protobuf import descriptor_pb2, descriptor_pool as _descriptor_pool, symbol_database as _symbol_database
+from google.protobuf.descriptor import MethodDescriptor, ServiceDescriptor
 from google.protobuf.descriptor_pb2 import ServiceDescriptorProto
 from google.protobuf.json_format import MessageToDict, ParseDict
-from grpc_reflection.v1alpha import reflection_pb2_grpc, reflection_pb2
+from grpc_reflection.v1alpha import reflection_pb2, reflection_pb2_grpc
 
 
 class DescriptorImport:
@@ -79,7 +79,7 @@ def parse_stream_requests(stream_requests_data: Iterable, input_type):
 
 
 def parse_response(response):
-    return MessageToDict(response)
+    return MessageToDict(response, preserving_proto_field_name=True)
 
 
 def parse_stream_responses(responses: Iterable):

@@ -1,4 +1,4 @@
-from . import app
+from .app import app
 from ..testcase import RealServerTestCase
 from ...grpc_requests import Client
 

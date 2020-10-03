@@ -24,6 +24,7 @@ print(result) # {"message":"Hellow sinsky"}
 - connect server using reflection
 - no need stub class request grpc
 - support all unary &  stream method
+- support tls
 
 ## install
 ```shell script
@@ -35,6 +36,8 @@ pip install grpc_requests
 from grpc_requests import Client
 
 client = Client.get_by_endpoint("localhost:50051")
+# if you want connect tls
+# client = Client.get_by_endpoint("localhost:443",ssl=True)
 assert client.service_names == ["helloworld.Greeter",'grpc.health.v1.Health']
 
 health = client.service('grpc.health.v1.Health')
@@ -167,3 +170,6 @@ print(type(result)) # HelloReply stub class
 - 0.0.5
     - Change
         - response filed get orginal proto field(before returend lowerCamelCase)        
+- 0.0.6
+    - Feature
+        - support tls connect 

@@ -24,7 +24,7 @@ print(result) # {"message":"Hellow sinsky"}
 - connect server using reflection
 - no need stub class request grpc
 - support all unary &  stream method
-- support tls
+- support tls & compression connect
 
 ## install
 ```shell script
@@ -38,6 +38,8 @@ from grpc_requests import Client
 client = Client.get_by_endpoint("localhost:50051")
 # if you want connect tls
 # client = Client.get_by_endpoint("localhost:443",ssl=True)
+# or if you want Compression connect
+# client = Client.get_by_endpoint("localhost:443",compression=grpc.Compression.Gzip)
 assert client.service_names == ["helloworld.Greeter",'grpc.health.v1.Health']
 
 health = client.service('grpc.health.v1.Health')
@@ -156,20 +158,28 @@ print(type(result)) # HelloReply stub class
 - [homi](https://github.com/spaceone-dev/homi) : micro grpc framework like flask. easy to use!
 
 ## Change Logs
-- 0.0.1
-    - sync proto using reflection
-    - auto convert request(response) from(to) dict
-    - support unary-unary
-- 0.0.2
-    - support all method type
-    - add request test case
+- 0.0.7
+    - Feature
+        - support Compression
+        
+- 0.0.6
+    - Feature
+        - support tls connect      
+
+- 0.0.5
+    - Change
+        - response filed get orginal proto field(before returend lowerCamelCase)  
+
 - 0.0.3
     - Feature
         - dynamic request method
         - service client
-- 0.0.5
-    - Change
-        - response filed get orginal proto field(before returend lowerCamelCase)        
-- 0.0.6
-    - Feature
-        - support tls connect 
+
+- 0.0.2
+    - support all method type
+    - add request test case
+
+- 0.0.1
+    - sync proto using reflection
+    - auto convert request(response) from(to) dict
+    - support unary-unary

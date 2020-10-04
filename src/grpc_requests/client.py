@@ -32,15 +32,18 @@ def reflection_request(channel, requests):
 
 
 class BaseClient:
-    def __init__(self, endpoint, symbol_db=None, descriptor_pool=None, channel_options=None, ssl=False):
+    def __init__(self, endpoint, symbol_db=None, descriptor_pool=None, channel_options=None, ssl=False,
+                 compression=None):
         self.endpoint = endpoint
         self._symbol_db = symbol_db or _symbol_database.Default()
         self._desc_pool = descriptor_pool or _descriptor_pool.Default()
+        self.compression = compression
         self.channel_options = channel_options
         if ssl:
-            self._channel = grpc.secure_channel(endpoint, grpc.ssl_channel_credentials(), options=self.channel_options)
+            self._channel = grpc.secure_channel(endpoint, grpc.ssl_channel_credentials(), options=self.channel_options,
+                                                compression=self.compression)
         else:
-            self._channel = grpc.insecure_channel(endpoint, options=self.channel_options)
+            self._channel = grpc.insecure_channel(endpoint, options=self.channel_options, compression=self.compression)
 
     @property
     def channel(self):
@@ -133,8 +136,9 @@ MethodTypeMatch: Dict[Tuple[IS_REQUEST_STREAM, IS_RESPONSE_STREAM], MethodType] 
 
 class ReflectionClient(BaseClient):
 
-    def __init__(self, endpoint, symbol_db=None, descriptor_pool=None, lazy=False, ssl=False, **kwargs):
-        super().__init__(endpoint, symbol_db, descriptor_pool, ssl=ssl)
+    def __init__(self, endpoint, symbol_db=None, descriptor_pool=None, lazy=False, ssl=False, compression=None,
+                 **kwargs):
+        super().__init__(endpoint, symbol_db, descriptor_pool, ssl=ssl, compression=compression)
         self._service_names: list = None
         self._lazy = lazy
         self.reflection_stub = reflection_pb2_grpc.ServerReflectionStub(self.channel)

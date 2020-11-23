@@ -33,7 +33,7 @@ def reflection_request(channel, requests):
 
 class BaseClient:
     def __init__(self, endpoint, symbol_db=None, descriptor_pool=None, channel_options=None, ssl=False,
-                 compression=None):
+                 compression=None,**kwargs):
         self.endpoint = endpoint
         self._symbol_db = symbol_db or _symbol_database.Default()
         self._desc_pool = descriptor_pool or _descriptor_pool.Default()
@@ -138,7 +138,7 @@ class ReflectionClient(BaseClient):
 
     def __init__(self, endpoint, symbol_db=None, descriptor_pool=None, lazy=False, ssl=False, compression=None,
                  **kwargs):
-        super().__init__(endpoint, symbol_db, descriptor_pool, ssl=ssl, compression=compression)
+        super().__init__(endpoint, symbol_db, descriptor_pool, ssl=ssl, compression=compression,**kwargs)
         self._service_names: list = None
         self._lazy = lazy
         self.reflection_stub = reflection_pb2_grpc.ServerReflectionStub(self.channel)

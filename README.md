@@ -21,8 +21,8 @@ print(result) # {"message":"Hellow sinsky"}
 
 
 ## Feature
-- connect server using reflection
-- no need stub class request grpc
+- connect server using reflection or Stub
+- no need stub class request grpc(if you want)
 - support all unary &  stream method
 - support tls & compression connect
 
@@ -32,6 +32,8 @@ pip install grpc_requests
 ```
 
 ## use it like RPC!
+
+If your server support reflection!
 ```python
 from grpc_requests import Client
 
@@ -48,6 +50,31 @@ assert health.method_names == ('Check', 'Watch')
 result = health.Check()
 assert result == {'status': 'SERVING'}
 
+greeter = client.service("helloworld.Greeter")
+
+request_data = {"name": 'sinsky'}
+result = greeter.SayHello(request_data)
+results = greeter.SayHelloGroup(request_data)
+
+requests_data = [{"name": 'sinsky'}]
+result = greeter.HelloEveryone(requests_data)
+results = greeter.SayHelloOneByOne(requests_data)
+
+```    
+or not you can also use your stub
+```python
+from grpc_requests import StubClient
+from .hellow_pb2 import Descriptor
+
+service_descriptor = DESCRIPTOR.services_by_name['Greeter'] # or you can just use _GREETER
+
+
+client = StubClient.get_by_endpoint("localhost:50051",service_descriptors=[service_descriptor,])
+# if you want connect tls
+# client = Client.get_by_endpoint("localhost:443",ssl=True)
+# or if you want Compression connect
+# client = Client.get_by_endpoint("localhost:443",compression=grpc.Compression.Gzip)
+assert client.service_names == ["helloworld.Greeter"]
 greeter = client.service("helloworld.Greeter")
 
 request_data = {"name": 'sinsky'}
@@ -125,7 +152,7 @@ assert all([dict == type(result) for result in unary_stream_results])
 
 
 
-## using Stub
+##  Reflection Client but you can send mesg by stub 
 ```python
 from grpc_requests import Client
 from helloworld_pb2 import HelloRequest
@@ -151,13 +178,18 @@ print(type(result)) # HelloReply stub class
 ```
 
 ## Road map
-- [ ] support no reflection server
-
+- [x] support no reflection server(Stub Client)
+- [ ] support async API!
 
 ## Relation Project
 - [homi](https://github.com/spaceone-dev/homi) : micro grpc framework like flask. easy to use!
 
 ## Change Logs
+- 0.0.8
+    - :sparkles: Feature
+        - #12 add StubClient
+    - :bug: Bug Fix!
+        - #11 bypasss kwargs to base client
 - 0.0.7
     - Feature
         - support Compression

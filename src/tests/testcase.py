@@ -1,4 +1,4 @@
-from google.protobuf import symbol_database as _symbol_database, descriptor_pool as _descriptor_pool
+from google.protobuf import descriptor_pool as _descriptor_pool, symbol_database as _symbol_database
 from google.protobuf.descriptor_pool import DescriptorPool
 from google.protobuf.symbol_database import SymbolDatabase
 from homi.test_case import HomiRealServerTestCase
@@ -7,6 +7,7 @@ from ..grpc_requests.client import reset_cached_client
 
 
 class RealServerTestCase(HomiRealServerTestCase):
+    reset_descriptor_pool = True
 
     @property
     def default_endpoint(self):
@@ -14,8 +15,9 @@ class RealServerTestCase(HomiRealServerTestCase):
 
     def reset_grpc_db(self):
         reset_cached_client()
-        _descriptor_pool._DEFAULT = DescriptorPool()
-        _symbol_database._DEFAULT = SymbolDatabase(pool=_descriptor_pool.Default())
+        if self.reset_descriptor_pool:
+            _descriptor_pool._DEFAULT = DescriptorPool()
+            _symbol_database._DEFAULT = SymbolDatabase(pool=_descriptor_pool.Default())
 
     def setUp(self):
         self.reset_grpc_db()

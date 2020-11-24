@@ -1,7 +1,7 @@
 import logging
 from enum import Enum
 from functools import partial
-from typing import Any, Dict, Iterable, NamedTuple, Tuple, TypeVar
+from typing import Any, Dict, Iterable, List, NamedTuple, Tuple, TypeVar
 
 import grpc
 from google.protobuf import descriptor_pb2, descriptor_pool as _descriptor_pool, symbol_database as _symbol_database
@@ -33,7 +33,7 @@ def reflection_request(channel, requests):
 
 class BaseClient:
     def __init__(self, endpoint, symbol_db=None, descriptor_pool=None, channel_options=None, ssl=False,
-                 compression=None,**kwargs):
+                 compression=None, **kwargs):
         self.endpoint = endpoint
         self._symbol_db = symbol_db or _symbol_database.Default()
         self._desc_pool = descriptor_pool or _descriptor_pool.Default()
@@ -134,15 +134,13 @@ MethodTypeMatch: Dict[Tuple[IS_REQUEST_STREAM, IS_RESPONSE_STREAM], MethodType] 
 }
 
 
-class ReflectionClient(BaseClient):
+class BaseGrpcClient(BaseClient):
 
     def __init__(self, endpoint, symbol_db=None, descriptor_pool=None, lazy=False, ssl=False, compression=None,
                  **kwargs):
-        super().__init__(endpoint, symbol_db, descriptor_pool, ssl=ssl, compression=compression,**kwargs)
+        super().__init__(endpoint, symbol_db, descriptor_pool, ssl=ssl, compression=compression, **kwargs)
         self._service_names: list = None
         self._lazy = lazy
-        self.reflection_stub = reflection_pb2_grpc.ServerReflectionStub(self.channel)
-        self.registered_file_names = set()
         self.has_server_registered = False
         self._services_module_name = {}
         self._service_methods_meta: Dict[str, Dict[str, MethodMetaData]] = {}
@@ -152,51 +150,8 @@ class ReflectionClient(BaseClient):
         self._stream_unary_handler = {}
         self._stream_stream_handler = {}
 
-        if not self._lazy:
-            self.register_all_service()
-
-    def _reflection_request(self, *requests):
-        responses = self.reflection_stub.ServerReflectionInfo((r for r in requests))
-        return responses
-
-    def _reflection_single_request(self, request):
-        results = list(self._reflection_request(request))
-        if len(results) > 1:
-            raise ValueError('response have more then one result')
-        return results[0]
-
     def _get_service_names(self):
-        request = reflection_pb2.ServerReflectionRequest(list_services="")
-        resp = self._reflection_single_request(request)
-        services = tuple([s.name for s in resp.list_services_response.service])
-        return services
-
-    def _get_file_descriptor_by_name(self, name):
-        request = reflection_pb2.ServerReflectionRequest(file_by_filename=name)
-        result = self._reflection_single_request(request)
-        proto = result.file_descriptor_response.file_descriptor_proto[0]
-        return descriptor_pb2.FileDescriptorProto.FromString(proto)
-
-    def _get_file_descriptor_by_symbol(self, symbol):
-        request = reflection_pb2.ServerReflectionRequest(file_containing_symbol=symbol)
-        result = self._reflection_single_request(request)
-        proto = result.file_descriptor_response.file_descriptor_proto[0]
-        return descriptor_pb2.FileDescriptorProto.FromString(proto)
-
-    def _register_file_descriptor(self, file_descriptor):
-        logging.debug(f"start {file_descriptor.name} register")
-        dependencies = list(file_descriptor.dependency)
-        logging.debug(f"find {len(dependencies)} dependency in {file_descriptor.name}")
-        for dep_file_name in dependencies:
-            if dep_file_name not in self.registered_file_names:
-                dep_desc = self._get_file_descriptor_by_name(dep_file_name)
-                self._register_file_descriptor(dep_desc)
-                self.registered_file_names.add(dep_file_name)
-            else:
-                logging.debug(f'{dep_file_name} already registered')
-
-        self._desc_pool.Add(file_descriptor)
-        logging.debug(f"end {file_descriptor.name} register")
+        raise NotImplementedError()
 
     def check_method_available(self, service, method, method_type: MethodType = None):
         if not self.has_server_registered:
@@ -243,8 +198,6 @@ class ReflectionClient(BaseClient):
 
     def register_service(self, service_name):
         logging.debug(f"start {service_name} register")
-        file_descriptor = self._get_file_descriptor_by_symbol(service_name)
-        self._register_file_descriptor(file_descriptor)
         svc_desc = self._desc_pool.FindServiceByName(service_name)
         self._service_methods_meta[service_name] = self._register_methods(svc_desc)
         logging.debug(f"end {service_name} register")
@@ -332,8 +285,84 @@ class ReflectionClient(BaseClient):
             raise ValueError(f"{name} doesn't support. Available service {self.service_names}")
 
 
+class ReflectionClient(BaseGrpcClient):
+
+    def __init__(self, endpoint, symbol_db=None, descriptor_pool=None, lazy=False, ssl=False, compression=None,
+                 **kwargs):
+        super().__init__(endpoint, symbol_db, descriptor_pool, ssl=ssl, lazy=lazy, compression=compression, **kwargs)
+        self.reflection_stub = reflection_pb2_grpc.ServerReflectionStub(self.channel)
+        self.registered_file_names = set()
+        if not self._lazy:
+            self.register_all_service()
+
+    def _reflection_request(self, *requests):
+        responses = self.reflection_stub.ServerReflectionInfo((r for r in requests))
+        return responses
+
+    def _reflection_single_request(self, request):
+        results = list(self._reflection_request(request))
+        if len(results) > 1:
+            raise ValueError('response have more then one result')
+        return results[0]
+
+    def _get_service_names(self):
+        request = reflection_pb2.ServerReflectionRequest(list_services="")
+        resp = self._reflection_single_request(request)
+        services = tuple([s.name for s in resp.list_services_response.service])
+        return services
+
+    def _get_file_descriptor_by_name(self, name):
+        request = reflection_pb2.ServerReflectionRequest(file_by_filename=name)
+        result = self._reflection_single_request(request)
+        proto = result.file_descriptor_response.file_descriptor_proto[0]
+        return descriptor_pb2.FileDescriptorProto.FromString(proto)
+
+    def _get_file_descriptor_by_symbol(self, symbol):
+        request = reflection_pb2.ServerReflectionRequest(file_containing_symbol=symbol)
+        result = self._reflection_single_request(request)
+        proto = result.file_descriptor_response.file_descriptor_proto[0]
+        return descriptor_pb2.FileDescriptorProto.FromString(proto)
+
+    def _register_file_descriptor(self, file_descriptor):
+        logging.debug(f"start {file_descriptor.name} register")
+        dependencies = list(file_descriptor.dependency)
+        logging.debug(f"find {len(dependencies)} dependency in {file_descriptor.name}")
+        for dep_file_name in dependencies:
+            if dep_file_name not in self.registered_file_names:
+                dep_desc = self._get_file_descriptor_by_name(dep_file_name)
+                self._register_file_descriptor(dep_desc)
+                self.registered_file_names.add(dep_file_name)
+            else:
+                logging.debug(f'{dep_file_name} already registered')
+
+        self._desc_pool.Add(file_descriptor)
+        logging.debug(f"end {file_descriptor.name} register")
+
+    def register_service(self, service_name):
+        logging.debug(f"start {service_name} register")
+        file_descriptor = self._get_file_descriptor_by_symbol(service_name)
+        self._register_file_descriptor(file_descriptor)
+        super(ReflectionClient, self).register_service(service_name)
+
+
+class StubClient(BaseGrpcClient):
+
+    def __init__(self, endpoint, service_descriptors: List[ServiceDescriptor], symbol_db=None, lazy=False,
+                 descriptor_pool=None, ssl=False, compression=None,
+                 **kwargs):
+        super().__init__(endpoint, symbol_db, descriptor_pool, ssl=ssl, compression=compression, lazy=lazy, **kwargs)
+        self.service_descriptors = service_descriptors
+
+        if not self._lazy:
+            self.register_all_service()
+
+    def _get_service_names(self):
+        svcs = [x.full_name for x in self.service_descriptors]
+        return svcs
+
+
 class ServiceClient:
-    def __init__(self, client: ReflectionClient, service_name: str):
+    def __init__(self, client: BaseGrpcClient, service_name: str):
         self.client = client
         self.name = service_name
         self._methods_meta = self.client.get_methods_meta(self.name)
@@ -354,9 +383,12 @@ Client = ReflectionClient
 _cached_clients: Dict[str, Client] = {}
 
 
-def get_by_endpoint(endpoint, **kwargs) -> Client:
+def get_by_endpoint(endpoint, service_descriptors=None, **kwargs) -> Client:
     if endpoint not in _cached_clients:
-        _cached_clients[endpoint] = Client(endpoint, **kwargs)
+        if service_descriptors:
+            _cached_clients[endpoint] = StubClient(endpoint, service_descriptors=service_descriptors, **kwargs)
+        else:
+            _cached_clients[endpoint] = Client(endpoint, **kwargs)
     return _cached_clients[endpoint]
 
 

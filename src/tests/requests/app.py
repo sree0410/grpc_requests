@@ -1,7 +1,10 @@
-from homi import App, Service
+from homi import App, Server, Service
 from homi.extend.service import health_service, reflection_service
 
-from .helloworld_pb2 import _GREETER
+try:
+    from .helloworld_pb2 import _GREETER
+except Exception as _:
+    from helloworld_pb2 import _GREETER
 
 app = App(services=[reflection_service, health_service, ])
 
@@ -44,3 +47,6 @@ def SayHelloOneByOne(request_iterator, context):
 
 
 app.add_service(greeter)
+
+if __name__ == '__main__':
+    Server(app=app).run()

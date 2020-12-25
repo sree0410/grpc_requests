@@ -1,7 +1,7 @@
 import logging
 from enum import Enum
 from functools import partial
-from typing import Any, Dict, Iterable, List, NamedTuple, Tuple, TypeVar
+from typing import Any, AsyncIterable, Dict, Iterable, List, NamedTuple, Tuple, TypeVar
 
 import grpc
 from google.protobuf import descriptor_pb2, descriptor_pool as _descriptor_pool, symbol_database as _symbol_database
@@ -53,6 +53,7 @@ class BaseAsyncClient:
 
     @classmethod
     def get_by_endpoint(cls, endpoint, **kwargs):
+        global _cached_clients
         if endpoint not in _cached_clients:
             _cached_clients[endpoint] = cls(endpoint, **kwargs)
         return _cached_clients[endpoint]
@@ -89,13 +90,13 @@ def parse_stream_requests(stream_requests_data: Iterable, input_type):
         yield parse_request_data(request_data or {}, input_type)
 
 
-def parse_response(response):
+async def parse_response(response):
     return MessageToDict(response, preserving_proto_field_name=True)
 
 
-def parse_stream_responses(responses: Iterable):
-    for resp in responses:
-        yield parse_response(resp)
+async def parse_stream_responses(responses: AsyncIterable):
+    async for resp in responses:
+        yield await parse_response(resp)
 
 
 class MethodType(Enum):
@@ -141,11 +142,10 @@ MethodTypeMatch: Dict[Tuple[IS_REQUEST_STREAM, IS_RESPONSE_STREAM], MethodType] 
 
 class BaseAsyncGrpcClient(BaseAsyncClient):
 
-    def __init__(self, endpoint, symbol_db=None, descriptor_pool=None, lazy=False, ssl=False, compression=None,
+    def __init__(self, endpoint, symbol_db=None, descriptor_pool=None, ssl=False, compression=None,
                  **kwargs):
         super().__init__(endpoint, symbol_db, descriptor_pool, ssl=ssl, compression=compression, **kwargs)
         self._service_names: list = None
-        self._lazy = lazy
         self.has_server_registered = False
         self._services_module_name = {}
         self._service_methods_meta: Dict[str, Dict[str, MethodMetaData]] = {}
@@ -164,7 +164,7 @@ class BaseAsyncGrpcClient(BaseAsyncClient):
         methods_meta = self._service_methods_meta.get(service)
         if not methods_meta:
             raise ValueError(
-                f"{self.endpoint} server doesn't support {service}. Available services {self.service_names}")
+                f"{self.endpoint} server doesn't support {service}. Available services {await self.service_names()}")
 
         if method not in methods_meta:
             raise ValueError(
@@ -214,13 +214,12 @@ class BaseAsyncGrpcClient(BaseAsyncClient):
 
     async def service_names(self):
         if self._service_names is None:
-            self._service_names = await  self._get_service_names()
+            self._service_names = await self._get_service_names()
         return self._service_names
 
-    def get_methods_meta(self, service_name: str):
-
-        if self._lazy and service_name in self.service_names and service_name not in self._service_methods_meta:
-            self.register_service(service_name)
+    async def get_methods_meta(self, service_name: str):
+        if service_name in await self.service_names() and service_name not in self._service_methods_meta:
+            await self.register_service(service_name)
 
         try:
             return self._service_methods_meta[service_name]
@@ -236,16 +235,20 @@ class BaseAsyncGrpcClient(BaseAsyncClient):
         method_meta = self.get_method_meta(service, method)
 
         _request = method_meta.method_type.request_parser(request, method_meta.input_type)
-        result = await method_meta.handler(_request, **kwargs)
+        if method_meta.method_type.is_unary_response:
+            result = await method_meta.handler(_request, **kwargs)
 
-        if raw_output:
-            return result
+            if raw_output:
+                return result
+            else:
+                return await method_meta.method_type.response_parser(result)
         else:
+            result = method_meta.handler(_request, **kwargs)
             return method_meta.method_type.response_parser(result)
 
     async def request(self, service, method, request=None, raw_output=False, **kwargs):
         await self.check_method_available(service, method)
-        return await  self._request(service, method, request, raw_output, **kwargs)
+        return await self._request(service, method, request, raw_output, **kwargs)
 
     async def unary_unary(self, service, method, request=None, raw_output=False, **kwargs):
         await self.check_method_available(service, method, MethodType.UNARY_UNARY)
@@ -282,14 +285,14 @@ class BaseAsyncGrpcClient(BaseAsyncClient):
             'response_deserializer': data_type.output_type.FromString,
         }
 
-    def service(self, name):
-        if name in self.service_names:
-            return ServiceClient(client=self, service_name=name)
+    async def service(self, name):
+        if name in await self.service_names():
+            return await ServiceClient.create(client=self, service_name=name)
         else:
-            raise ValueError(f"{name} doesn't support. Available service {self.service_names}")
+            raise ValueError(f"{name} doesn't support. Available service {await self.service_names()}")
 
 
-class ReflectionClientAsync(BaseAsyncGrpcClient):
+class ReflectionAsyncClient(BaseAsyncGrpcClient):
 
     def __init__(self, endpoint, symbol_db=None, descriptor_pool=None, ssl=False, compression=None,
                  **kwargs):
@@ -313,13 +316,13 @@ class ReflectionClientAsync(BaseAsyncGrpcClient):
 
     async def _get_file_descriptor_by_name(self, name):
         request = reflection_pb2.ServerReflectionRequest(file_by_filename=name)
-        result = await  self._reflection_single_request(request)
+        result = await self._reflection_single_request(request)
         proto = result.file_descriptor_response.file_descriptor_proto[0]
         return descriptor_pb2.FileDescriptorProto.FromString(proto)
 
     async def _get_file_descriptor_by_symbol(self, symbol):
         request = reflection_pb2.ServerReflectionRequest(file_containing_symbol=symbol)
-        result = await  self._reflection_single_request(request)
+        result = await self._reflection_single_request(request)
         proto = result.file_descriptor_response.file_descriptor_proto[0]
         return descriptor_pb2.FileDescriptorProto.FromString(proto)
 
@@ -329,7 +332,7 @@ class ReflectionClientAsync(BaseAsyncGrpcClient):
         logging.debug(f"find {len(dependencies)} dependency in {file_descriptor.name}")
         for dep_file_name in dependencies:
             if dep_file_name not in self.registered_file_names:
-                dep_desc = await  self._get_file_descriptor_by_name(dep_file_name)
+                dep_desc = await self._get_file_descriptor_by_name(dep_file_name)
                 await self._register_file_descriptor(dep_desc)
                 self.registered_file_names.add(dep_file_name)
             else:
@@ -340,12 +343,12 @@ class ReflectionClientAsync(BaseAsyncGrpcClient):
 
     async def register_service(self, service_name):
         logging.debug(f"start {service_name} register")
-        file_descriptor = await  self._get_file_descriptor_by_symbol(service_name)
+        file_descriptor = await self._get_file_descriptor_by_symbol(service_name)
         await self._register_file_descriptor(file_descriptor)
-        await super(ReflectionClientAsync, self).register_service(service_name)
+        await super(ReflectionAsyncClient, self).register_service(service_name)
 
 
-class StubClientAsync(BaseAsyncGrpcClient):
+class StubAsyncClient(BaseAsyncGrpcClient):
 
     def __init__(self, endpoint, service_descriptors: List[ServiceDescriptor], symbol_db=None,
                  descriptor_pool=None, ssl=False, compression=None,
@@ -353,8 +356,7 @@ class StubClientAsync(BaseAsyncGrpcClient):
         super().__init__(endpoint, symbol_db, descriptor_pool, ssl=ssl, compression=compression, **kwargs)
         self.service_descriptors = service_descriptors
 
-
-    def _get_service_names(self):
+    async def _get_service_names(self):
         svcs = [x.full_name for x in self.service_descriptors]
         return svcs
 
@@ -363,34 +365,42 @@ class ServiceClient:
     def __init__(self, client: BaseAsyncGrpcClient, service_name: str):
         self.client = client
         self.name = service_name
-        self._methods_meta = self.client.get_methods_meta(self.name)
-        self._method_names = tuple(self._methods_meta.keys())
-        self._register_methods()
 
     def _register_methods(self):
         for method in self._method_names:
             setattr(self, method, partial(self.client.request, self.name, method))
+
+    async def register(self):
+        self._methods_meta = await self.client.get_methods_meta(self.name)
+        self._method_names = tuple(self._methods_meta.keys())
+        self._register_methods()
+
+    @classmethod
+    async def create(cls, client: BaseAsyncGrpcClient, service_name: str):
+        svc_client = cls(client, service_name)
+        await svc_client.register()
+        return svc_client
 
     @property
     def method_names(self):
         return self._method_names
 
 
-Client = ReflectionClientAsync
+AsyncClient = ReflectionAsyncClient
 
-_cached_clients: Dict[str, Client] = {}
+_cached_clients: Dict[str, AsyncClient] = {}
 
 
-def get_by_endpoint(endpoint, service_descriptors=None, **kwargs) -> Client:
+def get_by_endpoint(endpoint, service_descriptors=None, **kwargs) -> AsyncClient:
     if endpoint not in _cached_clients:
         if service_descriptors:
-            _cached_clients[endpoint] = StubClientAsync(endpoint, service_descriptors=service_descriptors, **kwargs)
+            _cached_clients[endpoint] = StubAsyncClient(endpoint, service_descriptors=service_descriptors, **kwargs)
         else:
-            _cached_clients[endpoint] = Client(endpoint, **kwargs)
+            _cached_clients[endpoint] = AsyncClient(endpoint, **kwargs)
     return _cached_clients[endpoint]
 
 
-def reset_cached_client(endpoint=None):
+def reset_cached_async_client(endpoint=None):
     global _cached_clients
     if endpoint:
         if endpoint in _cached_clients:

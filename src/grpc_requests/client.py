@@ -51,6 +51,7 @@ class BaseClient:
 
     @classmethod
     def get_by_endpoint(cls, endpoint, **kwargs):
+        global _cached_clients
         if endpoint not in _cached_clients:
             _cached_clients[endpoint] = cls(endpoint, **kwargs)
         return _cached_clients[endpoint]

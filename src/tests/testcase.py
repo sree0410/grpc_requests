@@ -1,5 +1,4 @@
 from unittest import IsolatedAsyncioTestCase
-
 from google.protobuf import descriptor_pool as _descriptor_pool, symbol_database as _symbol_database
 from google.protobuf.descriptor_pool import DescriptorPool
 from google.protobuf.symbol_database import SymbolDatabase

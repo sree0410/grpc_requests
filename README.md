@@ -25,6 +25,7 @@ print(result) # {"message":"Hellow sinsky"}
 - no need stub class request grpc(if you want)
 - support all unary &  stream method
 - support tls & compression connect
+- support AsyncIO API
 
 ## install
 ```shell script
@@ -174,17 +175,47 @@ print(result) # {"message":"Hellow sinsky"}
 # or get raw response data
 result = client.unary_unary(service, method, HelloRequest(name='sinsky'),raw_output=True)
 print(type(result)) # HelloReply stub class
+```
+
+## AsyncIO API
+```python
+from grpc_requests.aio import AsyncClient
+
+client = AsyncClient("localhost:50051")
+
+health = await client.service('grpc.health.v1.Health')
+assert health.method_names == ('Check', 'Watch')
+
+result = await health.Check()
+assert result == {'status': 'SERVING'}
+
+greeter = await client.service("helloworld.Greeter")
+
+request_data = {"name": 'sinsky'}
+result = await greeter.SayHello(request_data)
+
+results =[x async for x in await greeter.SayHelloGroup(request_data)] 
+
+requests_data = [{"name": 'sinsky'}]
+result = await greeter.HelloEveryone(requests_data)
+results = [x async for x in await greeter.SayHelloOneByOne(requests_data)]  
 
 ```
 
 ## Road map
 - [x] support no reflection server(Stub Client)
-- [ ] support async API!
+- [x] support async API!
+- [ ] Document!
+- [ ] plugable interceptor
+
 
 ## Relation Project
 - [homi](https://github.com/spaceone-dev/homi) : micro grpc framework like flask. easy to use!
 
 ## Change Logs
+- 0.0.9 
+    - :sparkles: Feature
+        - #13 support AsyncIO API
 - 0.0.8
     - :sparkles: Feature
         - #12 add StubClient

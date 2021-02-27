@@ -390,10 +390,11 @@ class ServiceClient:
 
 AsyncClient = ReflectionAsyncClient
 
-_cached_clients: Dict[str, AsyncClient] = {}
+_cached_clients = {}  # Dict[str, AsyncClient] type (for 3.6,3.7 compatibility https://bugs.python.org/issue34939)
 
 
 def get_by_endpoint(endpoint, service_descriptors=None, **kwargs) -> AsyncClient:
+    global _cached_clients
     if endpoint not in _cached_clients:
         if service_descriptors:
             _cached_clients[endpoint] = StubAsyncClient(endpoint, service_descriptors=service_descriptors, **kwargs)

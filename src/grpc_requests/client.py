@@ -381,10 +381,11 @@ class ServiceClient:
 
 Client = ReflectionClient
 
-_cached_clients: Dict[str, Client] = {}
+_cached_clients = {}  # Dict[str, Client] type (for 3.6,3.7 compatibility https://bugs.python.org/issue34939)
 
 
 def get_by_endpoint(endpoint, service_descriptors=None, **kwargs) -> Client:
+    global _cached_clients
     if endpoint not in _cached_clients:
         if service_descriptors:
             _cached_clients[endpoint] = StubClient(endpoint, service_descriptors=service_descriptors, **kwargs)

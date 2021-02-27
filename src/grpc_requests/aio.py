@@ -163,8 +163,9 @@ class BaseAsyncGrpcClient(BaseAsyncClient):
             await self.register_all_service()
         methods_meta = self._service_methods_meta.get(service)
         if not methods_meta:
+            service_names = await self.service_names()
             raise ValueError(
-                f"{self.endpoint} server doesn't support {service}. Available services {await self.service_names()}")
+                self.endpoint + " server doesn't support " + service + ". Available services " + str(service_names))
 
         if method not in methods_meta:
             raise ValueError(
@@ -289,7 +290,8 @@ class BaseAsyncGrpcClient(BaseAsyncClient):
         if name in await self.service_names():
             return await ServiceClient.create(client=self, service_name=name)
         else:
-            raise ValueError(f"{name} doesn't support. Available service {await self.service_names()}")
+            service_names = await self.service_names()
+            raise ValueError(name + " doesn't support. Available service " + str(service_names))
 
 
 class ReflectionAsyncClient(BaseAsyncGrpcClient):
@@ -388,10 +390,11 @@ class ServiceClient:
 
 AsyncClient = ReflectionAsyncClient
 
-_cached_clients: Dict[str, AsyncClient] = {}
+_cached_clients = {}  # Dict[str, AsyncClient] type (for 3.6,3.7 compatibility https://bugs.python.org/issue34939)
 
 
 def get_by_endpoint(endpoint, service_descriptors=None, **kwargs) -> AsyncClient:
+    global _cached_clients
     if endpoint not in _cached_clients:
         if service_descriptors:
             _cached_clients[endpoint] = StubAsyncClient(endpoint, service_descriptors=service_descriptors, **kwargs)

@@ -163,9 +163,9 @@ class BaseAsyncGrpcClient(BaseAsyncClient):
             await self.register_all_service()
         methods_meta = self._service_methods_meta.get(service)
         if not methods_meta:
+            service_names = await self.service_names()
             raise ValueError(
-                self.endpoint + " server doesn't support " + service + ". Available services " + await
-                self.service_names())
+                self.endpoint + " server doesn't support " + service + ". Available services " + str(service_names))
 
         if method not in methods_meta:
             raise ValueError(
@@ -290,7 +290,8 @@ class BaseAsyncGrpcClient(BaseAsyncClient):
         if name in await self.service_names():
             return await ServiceClient.create(client=self, service_name=name)
         else:
-            raise ValueError(name + " doesn't support. Available service " + await self.service_names())
+            service_names = await self.service_names()
+            raise ValueError(name + " doesn't support. Available service " + str(service_names))
 
 
 class ReflectionAsyncClient(BaseAsyncGrpcClient):

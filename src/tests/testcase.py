@@ -1,9 +1,12 @@
-from unittest import IsolatedAsyncioTestCase
 from google.protobuf import descriptor_pool as _descriptor_pool, symbol_database as _symbol_database
 from google.protobuf.descriptor_pool import DescriptorPool
 from google.protobuf.symbol_database import SymbolDatabase
 from homi.test_case import HomiRealServerTestCase
 
+try:
+    from unittest import IsolatedAsyncioTestCase as AsyncTestCaseClass
+except ImportError:
+    from aiounittest import AsyncTestCase as AsyncTestCaseClass
 from ..grpc_requests.client import reset_cached_client
 
 
@@ -28,5 +31,5 @@ class RealServerTestCase(HomiRealServerTestCase):
         self.test_server.stop(1)
 
 
-class RealServerAsyncTestCase(RealServerTestCase, IsolatedAsyncioTestCase):
+class RealServerAsyncTestCase(RealServerTestCase, AsyncTestCaseClass):
     pass

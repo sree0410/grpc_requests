@@ -341,7 +341,14 @@ class ReflectionClient(BaseGrpcClient):
 
     def register_service(self, service_name):
         logging.debug(f"start {service_name} register")
+        if service_name == 'grpc.health.v1.Health':
+            logging.debug(f" skipping  {service_name} register")
+            return #skipping the health reflection
         file_descriptor = self._get_file_descriptor_by_symbol(service_name)
+
+        if service_name == 'grpc.reflection.v1alpha.ServerReflection'and \
+        file_descriptor.name != "grpc_reflection/v1alpha/reflection.proto":
+                 file_descriptor.name = "grpc_reflection/v1alpha/reflection.proto"
         self._register_file_descriptor(file_descriptor)
         super(ReflectionClient, self).register_service(service_name)
 
